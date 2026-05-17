@@ -727,46 +727,51 @@ with tab_infer:
         )
 
     with opt_col:
-        st.markdown('<div class="options-panel">', unsafe_allow_html=True)
-        st.markdown('<div class="options-title">✨ Inference Options</div>', unsafe_allow_html=True)
+        st.markdown("""
+<div class="options-panel">
+  <div class="options-title">🎀 How should I read this photo?</div>
+  <div style="font-size:0.75rem;color:#a070c0;margin-bottom:0.9rem">Pick what matches your photo situation</div>
+</div>
+""", unsafe_allow_html=True)
 
-        infer_mode = st.radio(
-            "Mode",
-            ["Standard", "Test-Time Augmentation (TTA)"],
-            horizontal=True,
+        # ── Photo quality preset ──────────────────────────────────────────
+        photo_situation = st.radio(
+            "Photo situation",
+            [
+                "📸  Clear selfie or portrait",
+                "🌥️  A bit blurry or low-light",
+                "🔬  I want the most careful analysis",
+            ],
+            label_visibility="collapsed",
         )
-        use_tta = infer_mode == "Test-Time Augmentation (TTA)"
 
-        col_a, col_b = st.columns(2)
-        with col_a:
-            if use_tta:
-                tta_n = st.select_slider("TTA Views", options=[2, 3, 4, 5], value=3)
-                temperature = 1.0
-            else:
-                temperature = st.select_slider(
-                    "🌡️ Temperature",
-                    options=[0.3, 0.5, 0.7, 1.0, 1.3, 1.6, 2.0],
-                    value=1.0,
-                )
-                tta_n = 3
-        with col_b:
-            topk = st.select_slider("🏅 Top-K Results", options=list(range(2, 10)), value=3)
+        st.markdown('<div style="height:0.6rem"></div>', unsafe_allow_html=True)
 
-        st.markdown("</div>", unsafe_allow_html=True)
+        # ── How many age guesses to show ─────────────────────────────────
+        show_guesses = st.radio(
+            "Show me",
+            ["🥇  Just the top guess", "🥇🥈🥉  Top 3 guesses", "📋  All age groups ranked"],
+            label_visibility="collapsed",
+            horizontal=False,
+        )
 
-    # ── Preprocessing tweaks (expandable) ────────────────────────────────────
-    with st.expander("🖼️ Image Preprocessing Tweaks  (optional)"):
-        pc1, pc2, pc3, pc4 = st.columns(4)
-        with pc1:
-            brightness = st.slider("☀️ Brightness", 0.5, 1.8, 1.0, 0.05)
-        with pc2:
-            contrast   = st.slider("🎛️ Contrast", 0.5, 1.8, 1.0, 0.05)
-        with pc3:
-            st.write("")
-            sharpen = st.toggle("🔪 Sharpen", value=False)
-        with pc4:
-            st.write("")
-            denoise = st.toggle("🧹 Denoise", value=False)
+        # Map friendly choices → technical params
+        if photo_situation == "📸  Clear selfie or portrait":
+            use_tta, tta_n, temperature = False, 3, 0.7   # sharp / confident
+            brightness, contrast, sharpen, denoise = 1.0, 1.0, False, False
+        elif photo_situation == "🌥️  A bit blurry or low-light":
+            use_tta, tta_n, temperature = False, 3, 1.3   # softer / smoother
+            brightness, contrast, sharpen, denoise = 1.15, 1.2, True, True
+        else:  # careful / TTA
+            use_tta, tta_n, temperature = True, 5, 1.0
+            brightness, contrast, sharpen, denoise = 1.0, 1.0, False, False
+
+        if show_guesses == "🥇  Just the top guess":
+            topk = 1
+        elif show_guesses == "🥇🥈🥉  Top 3 guesses":
+            topk = 3
+        else:
+            topk = 9
 
     st.markdown("")
 
@@ -807,22 +812,36 @@ with tab_infer:
             st.markdown('</div>', unsafe_allow_html=True)
 
         with res_col:
+            # friendly confidence narrative
+            if conf > 0.6:
+                conf_story = "I'm quite sure about this one 🎯"
+                conf_color = "#22c55e"
+            elif conf > 0.35:
+                conf_story = "It could also be the age above or below 🤔"
+                conf_color = "#f59e0b"
+            else:
+                conf_story = "Tricky photo — this is my best guess 💭"
+                conf_color = "#ef4444"
+
+            mode_story = "🔬 Extra-careful scan (TTA)" if use_tta else ("🌥️ Enhanced for low-light" if photo_situation.startswith("🌥") else "📸 Standard read")
+
             st.markdown(f"""
 <div style="margin-bottom:1.2rem">
-  <div class="fv-section-label">✨ Top Prediction</div>
-  <div style="margin-top:0.5rem">
-    <span class="result-badge">{top1['icon']}  {top1['label']}</span>
+  <div class="fv-section-label">✨ The face looks like age group</div>
+  <div style="margin-top:0.5rem;margin-bottom:0.6rem">
+    <span class="result-badge">{top1['icon']}  {top1['label']} years</span>
   </div>
+  <div style="font-size:0.82rem;color:{conf_color};font-weight:600;margin-top:0.4rem">{conf_story}</div>
+  <div style="font-size:0.72rem;color:#b09cc0;margin-top:0.2rem">{mode_story} · took {latency:.0f}ms</div>
 </div>
 """, unsafe_allow_html=True)
 
-            m1, m2, m3 = st.columns(3)
-            conf_label = "High ✅" if conf > 0.6 else "Medium ⚠️" if conf > 0.35 else "Low ❌"
-            unc_label  = "Low ✅" if uncert < 0.4 else "High ⚠️"
-            m1.metric("Confidence",  f"{conf*100:.1f}%",   delta=conf_label)
-            m2.metric("Uncertainty", f"{uncert*100:.1f}%", delta=unc_label,
-                      delta_color="normal" if uncert < 0.4 else "inverse")
-            m3.metric("Latency",     f"{latency:.0f} ms")
+            m1, m2 = st.columns(2)
+            sure_pct = int(conf * 100)
+            sure_words = "Very sure" if conf > 0.6 else "Somewhat sure" if conf > 0.35 else "Not very sure"
+            doubt_words = "Almost none" if uncert < 0.3 else "A little" if uncert < 0.55 else "Quite a bit"
+            m1.metric("How sure am I?",  f"{sure_pct}% — {sure_words}")
+            m2.metric("Room for doubt", doubt_words)
 
             st.markdown('<div class="fv-divider"><span class="fv-divider-icon">🌸</span></div>', unsafe_allow_html=True)
 
